@@ -1,52 +1,77 @@
-# TensorFlow: wraps base_loader + preprocessing
+"""TensorFlow ``tf.data.Dataset`` from ``BaseDataLoader`` paths and labels."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
 
 import tensorflow as tf
 
-def create_tf_dataset(base_loader, IMG_SIZE, MEAN, STD, batch_size, augment=False):
+if TYPE_CHECKING:
+    from base_loader import BaseDataLoader
+
+
+class TFImageDataset:
     """
-    Creates a tf.data.Dataset from your base loader.
+    Build a batched dataset of ``(image, label)`` from a path-based ``BaseDataLoader``.
 
-    Args:
-        base_loader: BaseDataLoader instance (already split-specific)
-        batch_size: Number of samples per batch
-        augment: Whether to apply data augmentation (training only)
-
-    Returns:
-        tf.data.Dataset yielding (image, label) batches
+    Images are decoded as RGB, resized, scaled to ``[0, 1]``, then normalized with ``mean`` /
+    ``std`` (e.g. from ``config``). Optional horizontal flip when ``augment`` is True.
     """
-    # Extract all paths and labels from base loader
-    paths = [sample[0] for sample in base_loader.samples]
-    labels = [sample[1] for sample in base_loader.samples]
 
-    # Convert to tensor slices
-    dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
+    def __init__(
+        self,
+        base_loader: BaseDataLoader,
+        img_size: tuple[int, int],
+        mean: Sequence[float],
+        std: Sequence[float],
+        batch_size: int = 32,
+        augment: bool = False,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        base_loader
+            Split-specific loader; uses ``samples`` as ``list[tuple[path, label]]``.
+        img_size
+            ``(height, width)`` for ``tf.image.resize``.
+        mean, std
+            Three-channel normalize values after scaling to ``[0, 1]``.
+        batch_size
+            Batch size after preprocessing.
+        augment
+            If True, apply random horizontal flip (training).
+        """
+        self.base_loader = base_loader
+        self.img_size = img_size
+        self.mean = tuple(mean)
+        self.std = tuple(std)
+        self.batch_size = batch_size
+        self.augment = augment
 
-    # Apply preprocessing
-    dataset = dataset.map(
-        lambda path, label: _load_and_preprocess(path, label, IMG_SIZE, MEAN, STD, augment),
-        num_parallel_calls=tf.data.AUTOTUNE
-    )
+    def build(self) -> tf.data.Dataset:
+        mean_tf = tf.constant(self.mean, dtype=tf.float32, shape=(1, 1, 3))
+        std_tf = tf.constant(self.std, dtype=tf.float32, shape=(1, 1, 3))
 
-    # Batch and prefetch
-    dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        paths = [p for p, _ in self.base_loader.samples]
+        labels = [int(y) for _, y in self.base_loader.samples]
+        dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
 
-    return dataset
+        def load(path, label):
+            return _load_and_preprocess(
+                path, label, self.img_size, mean_tf, std_tf, self.augment
+            )
 
-def _load_and_preprocess(path, label, IMG_SIZE, MEAN, STD, augment):
-    """Load image, decode, resize, normalize, and optionally augment"""
-    # Read and decode image
+        dataset = dataset.map(load, num_parallel_calls=tf.data.AUTOTUNE)
+        return dataset.batch(self.batch_size).prefetch(tf.data.AUTOTUNE)
+
+
+def _load_and_preprocess(path, label, img_size, mean_tf, std_tf, augment):
     image = tf.io.read_file(path)
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
-    image = tf.image.resize(image, IMG_SIZE)
-    image = tf.cast(image, tf.float32) / 255.0  # Scale to [0,1]
-
-    # Augmentation (training only)
+    image.set_shape([None, None, 3])
+    image = tf.image.resize(image, img_size)
+    image = tf.cast(image, tf.float32) / 255.0
     if augment:
-        image = tf.image.random_flip_left_right(image)  # Same as PyTorch RandomHorizontalFlip
-
-    # Normalize using same ImageNet stats as PyTorch
-    mean = tf.constant(MEAN, dtype=tf.float32, shape=[1, 1, 3])
-    std = tf.constant(STD, dtype=tf.float32, shape=[1, 1, 3])
-    image = (image - mean) / std
-
-    return image, label
+        image = tf.image.random_flip_left_right(image)
+    image = (image - mean_tf) / std_tf
+    return image, tf.cast(label, tf.int32)
