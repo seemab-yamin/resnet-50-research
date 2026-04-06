@@ -1,66 +1,94 @@
+"""Generic filesystem indexer for class-folder classification datasets."""
+
+from __future__ import annotations
+
 import os
 import random
 from pathlib import Path
 
+# Filenames under each class directory must end with one of these (case-insensitive).
+DEFAULT_FILE_EXTENSIONS: tuple[str, ...] = (".png", ".jpg", ".jpeg")
+
+
 class BaseDataLoader:
     """
-    Framework-agnostic data loader that provides image paths and labels.
-    Both PyTorch and TensorFlow will use this as their source of truth.
+    Index samples from a nested directory layout without binding to a specific ML framework.
+
+    Expected layout::
+
+        {data_root}/{split_name}/{class_name}/<files>
+
+    Each immediate subfolder of ``split_name`` is a class; eligible files inside become
+    one sample each as ``(absolute_path_str, integer_label)``.
     """
 
-    def __init__(self, data_root, split="Train", seed=42, is_train_shuffle=True):
+    def __init__(
+        self,
+        data_root: str | Path,
+        split: str = "Train",
+        seed: int = 42,
+        is_train_shuffle: bool = True,
+        *,
+        file_extensions: tuple[str, ...] | None = None,
+    ) -> None:
         """
-        Args:
-            data_root: Path to dataset root (e.g., "data/")
-            split: "Train", "Val", or "Test"
-            seed: Random seed for reproducibility
-            is_train_shuffle: If True, shuffles samples for the "Train" split.
+        Parameters
+        ----------
+        data_root
+            Root directory containing per-split subdirectories.
+        split
+            Name of the split subdirectory under ``data_root`` (e.g. ``Train``, ``Val``, ``Test``).
+        seed
+            Seed for ``random`` (e.g. shuffling).
+        is_train_shuffle
+            If True, shuffle the sample list when ``split`` is ``"Train"``.
+        file_extensions
+            Allowed filename suffixes, lowercase with leading dot. Defaults to ``DEFAULT_FILE_EXTENSIONS``.
         """
         self.data_root = Path(data_root)
         self.split = split
         self.seed = seed
-        # Initialize random seed for reproducibility in operations like shuffling
+        exts = (
+            file_extensions if file_extensions is not None else DEFAULT_FILE_EXTENSIONS
+        )
+        self._extensions = tuple(e.lower() for e in exts)
+
         random.seed(seed)
 
-        # Build index
-        self.samples = []  # List of (image_path, label)
-        self.class_to_idx = {}
+        self.samples: list[tuple[str, int]] = []
+        self.class_to_idx: dict[str, int] = {}
 
         split_path = self.data_root / split
         if not split_path.exists():
             raise ValueError(f"Split path not found: {split_path}")
 
-        # Assumes folder structure: split/class_name/image.jpg
         for class_name in sorted(os.listdir(split_path)):
             class_path = split_path / class_name
             if not class_path.is_dir():
                 continue
 
-            # Assign integer label
             label_idx = len(self.class_to_idx)
             self.class_to_idx[class_name] = label_idx
 
-            # Add all images in this class
-            for img_file in os.listdir(class_path):
-                if img_file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    img_path = class_path / img_file
-                    self.samples.append((str(img_path), label_idx))
+            for filename in os.listdir(class_path):
+                if filename.lower().endswith(self._extensions):
+                    file_path = class_path / filename
+                    self.samples.append((str(file_path), label_idx))
 
-        # Optionally shuffle (for training) based on is_train_shuffle argument
         if split == "Train" and is_train_shuffle:
             random.shuffle(self.samples)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx):
-        """Returns (image_path, label)"""
+    def __getitem__(self, idx: int) -> tuple[str, int]:
+        """Return the ``idx``-th ``(file_path, label_index)`` pair."""
         return self.samples[idx]
 
-    def get_all_paths_and_labels(self):
-        """Returns all (path, label) pairs"""
+    def get_all_paths_and_labels(self) -> list[tuple[str, int]]:
+        """Return all ``(file_path, label_index)`` pairs (same list as ``samples``)."""
         return self.samples
 
-    def get_class_mapping(self):
-        """Returns dict: class_name -> label_idx"""
+    def get_class_mapping(self) -> dict[str, int]:
+        """Return ``class_name -> label_index`` (stable order from sorted class directory names)."""
         return self.class_to_idx
