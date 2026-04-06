@@ -1,7 +1,8 @@
 # Goal: Single source of truth for all hyperparameters
 # config.py
-
-PROJECT_ROOT_DIR = "/content/drive/MyDrive/ai-projects/2026-03-transfer-learning-resnet-50"
+PROJECT_ROOT_DIR = (
+    "/content/drive/MyDrive/ai-projects/2026-03-transfer-learning-resnet-50"
+)
 LOG_DIR = PROJECT_ROOT_DIR + "/logs"
 
 DATASET_NAME = "COVID-QU-Ex Dataset"
@@ -12,9 +13,12 @@ COVIDQU_PATH = DATASET_ROOT_DIR + "/covidqu"
 IMG_SIZE = (224, 224)
 # Add seed for reproducibility:
 SEED = 42
+
+# test run
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
 
+# actual run
 BATCH_SIZE = 128
 LEARNING_RATE = 0.004
 
@@ -22,6 +26,6 @@ LEARNING_RATE = 0.004
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 
-EPOCHS=15
+EPOCHS = 15
 
 DEVICE = "cuda"
