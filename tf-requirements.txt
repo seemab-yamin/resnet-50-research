@@ -1,4 +1,4 @@
 tensorflow
 keras
-sklearn
+scikit-learn
 numpy
