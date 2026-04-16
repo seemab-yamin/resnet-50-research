@@ -94,12 +94,14 @@ class TrainingLogger(tf.keras.callbacks.Callback):
             json.dump(self.history, f, indent=4)
 
 
-def get_callbacks() -> list[tf.keras.callbacks.Callback]:
+def get_callbacks(
+    results_dir=config.PROJECT_ROOT_DIR + "/results",
+) -> list[tf.keras.callbacks.Callback]:
     """Checkpoint, schedule, early stop, and logging callbacks using ``config.PROJECT_ROOT_DIR``."""
-    root = Path(config.PROJECT_ROOT_DIR)
-    results = root / "results"
+    results = Path(results_dir)
+
     results.mkdir(parents=True, exist_ok=True)
-    tb_dir = root / "results" / "tensorboard"
+    tb_dir = results / "tensorboard"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     return [
