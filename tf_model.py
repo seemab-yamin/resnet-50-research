@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from datetime import datetime
 
 # evaluate_and_save.py
 import numpy as np
@@ -35,7 +36,8 @@ for _i, _gpu in enumerate(_gpus):
         pass
     print(f"GPU {_i} name: {_name}")
 
-results_dir = config.PROJECT_ROOT_DIR + "/tf-results"
+run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+results_dir = os.path.join(config.PROJECT_ROOT_DIR, "tf-results", run_timestamp)
 os.makedirs(results_dir, exist_ok=True)
 
 # fetch training data
@@ -144,7 +146,7 @@ def train_model(
     model,
     train_ds,
     val_ds,
-    results_dir=config.PROJECT_ROOT_DIR + "/results",
+    results_dir,
     epochs=config.EPOCHS,
 ):
     """Compile and train model"""
@@ -165,7 +167,6 @@ def train_model(
 start_time = time.time()
 
 # Train
-# TODO
 history = train_model(model, train_dataset, val_dataset, results_dir)
 
 # Record training time
@@ -175,17 +176,6 @@ train_time = time.time() - start_time
 _dataset_size = len(train_base)
 _epochs = len(history.history["loss"])
 _throughput = (_dataset_size * _epochs) / train_time if train_time > 0 else 0.0
-print(f"Throughput: {_throughput:.1f} images/sec")
-
-
-def evaluate_model(model, test_dataset):
-    """Evaluate on test set and return metrics"""
-    test_loss, test_acc = model.evaluate(test_dataset, verbose=1)
-
-    print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test Accuracy: {test_acc:.4f}")
-
-    return test_loss, test_acc
 
 
 # Evaluate
@@ -200,19 +190,13 @@ test_dataset = TFImageDataset(
     batch_size=config.BATCH_SIZE,
     augment=False,
 ).build()
-test_loss, test_acc = evaluate_model(model, test_dataset)
+
 
 # Save metrics
 results = {
     "framework": "TensorFlow",
-    "test_accuracy": float(test_acc),
-    "test_loss": float(test_loss),
     "training_time_seconds": train_time,
-    "throughput_images_per_sec": float(
-        (len(train_base) * len(history.history["loss"])) / train_time
-        if train_time > 0
-        else 0.0
-    ),
+    "throughput_images_per_sec": float(_throughput),
     "final_train_loss": float(history.history["loss"][-1]),
     "final_train_acc": float(history.history["accuracy"][-1]),
     "final_val_loss": float(history.history["val_loss"][-1]),
@@ -220,11 +204,9 @@ results = {
     "best_val_acc": float(np.max(history.history["val_accuracy"])),
     "epochs_completed": len(history.history["loss"]),
 }
-
-results_json = results_dir + "/" + "tf_results.json"
+results_json = os.path.join(results_dir, "tf_training_summary.json")
 with open(results_json, "w") as f:
     json.dump(results, f, indent=4)
-
 print("Results saved to: ", results_json)
 
 
@@ -232,19 +214,29 @@ def evaluate_and_save_all(
     model, test_dataset, class_names, save_dir="results", framework="tf"
 ):
     """
-    Complete evaluation: saves predictions, metrics, confusion matrix
+    Complete evaluation: saves predictions, metrics, confusion matrix.
+    Also returns test loss and accuracy.
     """
 
-    # 1. Collect all predictions
+    # 1. Collect all predictions and compute test loss
     y_true = []
     y_pred = []
     y_pred_proba = []
+    total_loss = 0.0
+    num_batches = 0
 
-    print("Collecting predictions...")
+    print("Collecting predictions and computing test loss...")
     for images, labels in test_dataset:
+        # Get predictions
         pred_proba = model.predict(images, verbose=0)
         pred = np.argmax(pred_proba, axis=1)
 
+        # Compute batch loss (using model's loss function)
+        batch_loss = model.compute_loss(x=images, y=labels, y_pred=pred_proba)
+        total_loss += batch_loss.numpy()
+        num_batches += 1
+
+        # Store predictions
         y_pred_proba.extend(pred_proba)
         y_pred.extend(pred)
         y_true.extend(labels.numpy())
@@ -254,7 +246,11 @@ def evaluate_and_save_all(
     y_pred = np.array(y_pred)
     y_pred_proba = np.array(y_pred_proba)
 
-    # 2. Save all predictions (for later comparison plots)
+    # Calculate average test loss
+    test_loss = total_loss / num_batches
+    test_accuracy = accuracy_score(y_true, y_pred)
+
+    # 2. Save all predictions
     np.savez(
         f"{save_dir}/{framework}_predictions.npz",
         y_true=y_true,
@@ -266,7 +262,8 @@ def evaluate_and_save_all(
     # 3. Calculate full test metrics
     metrics = {
         "framework": framework.upper(),
-        "test_accuracy": float(accuracy_score(y_true, y_pred)),
+        "test_loss": float(test_loss),
+        "test_accuracy": float(test_accuracy),
         "test_precision_macro": float(
             precision_score(y_true, y_pred, average="macro", zero_division=0)
         ),
@@ -323,20 +320,22 @@ def evaluate_and_save_all(
     print("\n" + "=" * 50)
     print(f"FINAL TEST METRICS - {framework.upper()}")
     print("=" * 50)
-    print(f"Accuracy:  {metrics['test_accuracy']:.4f}")
+    print(f"Loss:      {test_loss:.4f}")
+    print(f"Accuracy:  {test_accuracy:.4f}")
     print(f"Precision: {metrics['test_precision_macro']:.4f} (macro)")
     print(f"Recall:    {metrics['test_recall_macro']:.4f} (macro)")
     print(f"F1-Score:  {metrics['test_f1_macro']:.4f} (macro)")
     print("=" * 50)
 
-    return metrics, y_true, y_pred, y_pred_proba
+    return metrics, y_true, y_pred, y_pred_proba, test_loss, test_accuracy
 
 
 # Run evaluation
 class_names = list(test_base.class_to_idx.keys())
-metrics, y_true, y_pred, y_pred_proba = evaluate_and_save_all(
-    model, test_dataset, class_names, save_dir=results_dir, framework="tf"
+metrics, y_true, y_pred, y_pred_proba, test_loss, test_accuracy = evaluate_and_save_all(
+    model, test_dataset, class_names, save_dir=results_dir
 )
+test_acc = metrics["test_accuracy"]
 
 # ============================================
 # QUICK ANALYSIS - Run immediately after evaluation
