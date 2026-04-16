@@ -14,10 +14,6 @@ IMG_SIZE = (224, 224)
 # Add seed for reproducibility:
 SEED = 42
 
-# test run
-BATCH_SIZE = 32
-LEARNING_RATE = 0.001
-
 # actual run
 BATCH_SIZE = 128
 LEARNING_RATE = 0.004
