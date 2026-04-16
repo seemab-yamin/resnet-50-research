@@ -363,8 +363,6 @@ print(f"   Improvement:     +{improvement:.1f} percentage points")
 
 # 3. Convergence Check
 val_acc = history.history["val_accuracy"]
-last_3_avg = np.mean(val_acc[-3:])
-best_3_avg = np.mean(sorted(val_acc)[-3:])
 
 print("\n🎯 CONVERGENCE STATUS:")
 if val_acc[-1] == max(val_acc):
@@ -393,7 +391,6 @@ else:
     print("   ❌ Significant overfitting (gap > 10%)")
 
 # 5. Training Efficiency
-total_time = sum(history.history.get("time", [train_time]))
 print("\n⚡ EFFICIENCY:")
 print(f"   Total training:  {train_time:.1f} seconds ({train_time / 60:.2f} minutes)")
 print(f"   Epochs:          {len(history.history['loss'])}")
